@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bili-video-notes"
+version = "0.1.0"
+description = "Extract Bilibili metadata, subtitles, audio, local ASR transcripts, and Markdown study-note drafts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "Zhuanz" }
+]
+keywords = ["bilibili", "subtitle", "transcript", "whisper", "notes", "asr"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Text Processing",
+]
+
+[project.optional-dependencies]
+asr = ["faster-whisper>=1.0.0"]
+ytdlp = ["yt-dlp>=2025.1.0"]
+dev = ["pytest>=8.0"]
+all = ["faster-whisper>=1.0.0", "yt-dlp>=2025.1.0"]
+
+[project.scripts]
+bili-video-notes = "bilivideo_notes.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/your-name/bili-video-notes"
+Issues = "https://github.com/your-name/bili-video-notes/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
