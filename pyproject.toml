@@ -36,8 +36,8 @@ all = ["faster-whisper>=1.0.0", "yt-dlp>=2025.1.0"]
 bili-video-notes = "bilivideo_notes.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/your-name/bili-video-notes"
-Issues = "https://github.com/your-name/bili-video-notes/issues"
+Homepage = "https://github.com/cyberxz2077/bilibili-video-notes-tool"
+Issues = "https://github.com/cyberxz2077/bilibili-video-notes-tool/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

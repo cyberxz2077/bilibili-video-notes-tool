@@ -18,8 +18,8 @@ The tool is designed for course/video study workflows:
 From source:
 
 ```bash
-git clone https://github.com/your-name/bili-video-notes.git
-cd bili-video-notes
+git clone https://github.com/cyberxz2077/bilibili-video-notes-tool.git
+cd bilibili-video-notes-tool
 python3 -m pip install -e .
 ```
 
