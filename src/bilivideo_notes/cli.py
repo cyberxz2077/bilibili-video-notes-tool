@@ -2,8 +2,9 @@
 """Fetch Bilibili metadata/subtitles/audio and optionally run local ASR.
 
 Default backend order is:
-1. Direct public Bilibili APIs for fast, dependency-light processing.
-2. Optional yt-dlp fallback for cases where Bilibili APIs fail or audio streams
+1. Browser-captured metadata/play URLs from a logged-in page session.
+2. Direct public Bilibili APIs for fast, dependency-light processing.
+3. Optional yt-dlp fallback for cases where Bilibili APIs fail or audio streams
    require browser cookies.
 """
 
@@ -72,6 +73,110 @@ def fmt_time(seconds: float | int | None) -> str:
 
 def write_json(path: pathlib.Path, obj: object) -> None:
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def first_dict(*values: object) -> dict:
+    for value in values:
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def owner_name(owner: object) -> str | None:
+    if isinstance(owner, dict):
+        value = owner.get("name") or owner.get("uname") or owner.get("mid")
+        return str(value) if value is not None else None
+    return str(owner) if owner else None
+
+
+def subtitles_from_metadata(raw_metadata: dict[str, object]) -> list[dict]:
+    player = first_dict(raw_metadata.get("player"))
+    browser = first_dict(raw_metadata.get("browser"))
+    state = first_dict(
+        browser.get("__INITIAL_STATE__"),
+        browser.get("initialState"),
+        browser.get("initial_state"),
+        browser.get("state"),
+    )
+    playinfo = first_dict(browser.get("__playinfo__"), browser.get("playinfo"), browser.get("playInfo"))
+
+    candidates: list[object] = [
+        ((player.get("data") or {}).get("subtitle") or {}).get("subtitles") if isinstance(player.get("data"), dict) else None,
+        browser.get("subtitles"),
+        ((playinfo.get("data") or {}).get("subtitle") or {}).get("subtitles") if isinstance(playinfo.get("data"), dict) else None,
+        ((state.get("videoData") or {}).get("subtitle") or {}).get("subtitles") if isinstance(state.get("videoData"), dict) else None,
+        (state.get("subtitle") or {}).get("list") if isinstance(state.get("subtitle"), dict) else None,
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, list) and candidate:
+            return [item for item in candidate if isinstance(item, dict)]
+    return []
+
+
+def playurl_from_metadata(raw_metadata: dict[str, object]) -> dict:
+    playurl = first_dict(raw_metadata.get("playurl"))
+    if playurl:
+        return playurl
+    browser = first_dict(raw_metadata.get("browser"))
+    return first_dict(
+        browser.get("playurl"),
+        browser.get("play_url"),
+        browser.get("__playinfo__"),
+        browser.get("playinfo"),
+        browser.get("playInfo"),
+    )
+
+
+def browser_probe(browser_json_path: pathlib.Path, bvid: str) -> tuple[dict, dict]:
+    payload = json.loads(browser_json_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("--browser-metadata-json must point to a JSON object")
+
+    state = first_dict(
+        payload.get("__INITIAL_STATE__"),
+        payload.get("initialState"),
+        payload.get("initial_state"),
+        payload.get("state"),
+        payload,
+    )
+    video_data = first_dict(state.get("videoData"), state.get("video_data"), payload.get("videoData"))
+    playinfo = first_dict(payload.get("__playinfo__"), payload.get("playinfo"), payload.get("playInfo"))
+    player = first_dict(payload.get("player"))
+    playurl = playurl_from_metadata({"browser": payload})
+
+    resolved_bvid = (
+        payload.get("bvid")
+        or state.get("bvid")
+        or video_data.get("bvid")
+        or bvid
+    )
+    duration = (
+        payload.get("duration")
+        or video_data.get("duration")
+        or ((playinfo.get("data") or {}).get("timelength") / 1000 if isinstance(playinfo.get("data"), dict) and playinfo["data"].get("timelength") else None)
+    )
+    cid = payload.get("cid") or state.get("cid") or video_data.get("cid")
+    raw_metadata: dict[str, object] = {"browser": payload}
+    if player:
+        raw_metadata["player"] = player
+    if playurl:
+        raw_metadata["playurl"] = playurl
+
+    summary = {
+        "backend_used": "browser",
+        "bvid": resolved_bvid,
+        "aid": payload.get("aid") or state.get("aid") or video_data.get("aid"),
+        "cid": cid,
+        "title": payload.get("title") or video_data.get("title") or state.get("title"),
+        "owner": owner_name(payload.get("owner") or video_data.get("owner") or state.get("owner")),
+        "duration": duration,
+        "duration_hhmmss": fmt_time(duration),
+        "desc": payload.get("desc") or video_data.get("desc") or state.get("desc"),
+        "subtitle_count": len(subtitles_from_metadata(raw_metadata)),
+        "need_login_subtitle": None,
+        "outputs": {},
+    }
+    return summary, raw_metadata
 
 
 def write_subtitle_jsonl(subtitle_json: dict, output: pathlib.Path) -> int:
@@ -350,6 +455,14 @@ def main() -> int:
     parser.add_argument("url_or_bvid")
     parser.add_argument("--out-dir", default="/tmp")
     parser.add_argument("--backend", choices=["auto", "api", "yt-dlp"], default="auto")
+    parser.add_argument(
+        "--browser-metadata-json",
+        type=pathlib.Path,
+        help=(
+            "JSON captured from a logged-in Bilibili page context. When provided, "
+            "this is used before public APIs and yt-dlp."
+        ),
+    )
     parser.add_argument("--yt-dlp-bin", default="yt-dlp")
     parser.add_argument("--yt-dlp-format", default="ba/bestaudio")
     parser.add_argument("--cookies-from-browser", help="Pass through to yt-dlp, e.g. chrome or safari")
@@ -378,7 +491,9 @@ def main() -> int:
     raw_metadata: dict[str, object] = {}
     api_error = None
 
-    if args.backend in {"auto", "api"}:
+    if args.browser_metadata_json:
+        summary, raw_metadata = browser_probe(args.browser_metadata_json, bvid)
+    elif args.backend in {"auto", "api"}:
         try:
             summary, view, player = api_probe(bvid)
             raw_metadata = {"view": view, "player": player}
@@ -400,8 +515,7 @@ def main() -> int:
         summary["outputs"]["metadata"] = str(metadata_path)
 
     if args.download_subtitles:
-        player = raw_metadata.get("player") if isinstance(raw_metadata.get("player"), dict) else None
-        subtitles = ((player or {}).get("data") or {}).get("subtitle", {}).get("subtitles") or []
+        subtitles = subtitles_from_metadata(raw_metadata)
         if subtitles:
             sub = subtitles[0]
             sub_url = sub.get("subtitle_url") or sub.get("subtitleUrl")
@@ -428,23 +542,25 @@ def main() -> int:
 
     audio_path = out_dir / f"{bvid}_audio.m4s"
     if args.download_audio or args.transcribe:
-        if summary["backend_used"] == "api":
+        if summary["backend_used"] in {"api", "browser"}:
             try:
-                cid = summary.get("cid")
-                playurl = request_json(
-                    f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&fnval=4048&fourk=1",
-                    bvid,
-                )
+                playurl = playurl_from_metadata(raw_metadata)
+                if not playurl:
+                    cid = summary.get("cid")
+                    playurl = request_json(
+                        f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&fnval=4048&fourk=1",
+                        bvid,
+                    )
                 audios = ((playurl.get("data") or {}).get("dash") or {}).get("audio") or []
                 if not audios:
-                    raise RuntimeError("No audio streams found in API playurl")
+                    raise RuntimeError("No audio streams found in playurl")
                 audio = max(audios, key=lambda item: item.get("bandwidth") or 0)
                 audio_url = audio.get("baseUrl") or audio.get("base_url")
                 if not audio_url:
                     raise RuntimeError("Selected audio stream has no URL")
                 bytes_written = download(audio_url, audio_path, bvid)
                 summary["selected_audio"] = {
-                    "backend": "api",
+                    "backend": summary["backend_used"],
                     "id": audio.get("id"),
                     "bandwidth": audio.get("bandwidth"),
                     "mimeType": audio.get("mimeType"),

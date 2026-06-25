@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bili-video-notes"
-version = "0.1.0"
-description = "Extract Bilibili metadata, subtitles, audio, local ASR transcripts, and Markdown study-note drafts."
+version = "0.2.0"
+description = "Extract Bilibili metadata, browser-captured media URLs, subtitles, audio, local ASR transcripts, and Markdown notes."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
